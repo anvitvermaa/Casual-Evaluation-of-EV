@@ -36,33 +36,15 @@ This document tracks the end-to-end progress of a Scopus Q1/Q2 targeted academic
 - [x] Set up `config/settings.py` with global constants and seed states
 - [x] Write `Makefile` for one-command pipeline execution
 
-### Phase 2: Data Ingestion & Raw Storage
-- [x] Implement `src/data_ingestion/fetch_vehicle_registrations.py`
-  - [x] Connect to OpenCity.in / Mahasdb API or static file endpoint
-  - [x] Download and validate RTO-level EV registration CSVs
-  - [x] Store raw files in `data/raw/vehicle_registrations/`
-- [x] Implement `src/data_ingestion/fetch_air_quality.py`
-  - [x] Fetch hourly PM2.5 / NOx data for Maharashtra corridors
-  - [x] Store raw files in `data/raw/air_quality/`
-- [x] Implement `src/data_ingestion/fetch_economic_survey.py`
-  - [x] Fetch district-wise GSDP and socio-economic indicators
-  - [x] Store raw files in `data/raw/economic_survey/`
-- [x] Implement `src/data_ingestion/validate_raw_data.py`
-  - [x] Schema checks, null audits, date range validation
-  - [x] Generate `reports/data_quality_report.md`
+### Phase 2: Data Ingestion (Macro-State Spatial Pivot) [IN PROGRESS]
+- `[ ]` Remove invalid RTO downscaling logic from `parse_vahan_data.py`
+- `[ ]` Implement Pathway B: State-level Vahan data extraction for Maharashtra (Treated) and Donor States (Gujarat, Karnataka, MP, TN, etc.)
+- `[ ]` Update OpenAQ fetching to pull state-wide / capital-city PM2.5 metrics for donor states
+- `[ ]` Re-align economic covariates to state-level GDP and urbanization
 
-### Phase 3: Data Engineering (DuckDB + Polars)
-- [x] Implement `src/data_engineering/duckdb_joins.py`
-  - [x] Load all raw Parquet/CSV files as DuckDB relations (zero-copy)
-  - [x] Execute multi-source SQL JOINs on district_id / date_month keys
-  - [x] Export unified analytical dataset as Parquet
-- [x] Implement `src/features/polars_transform.py`
-  - [x] Lazy-evaluate feature engineering pipeline (.lazy())
-  - [x] Derive: EV penetration rate, monthly delta, 3-month rolling avg
-  - [x] Derive: PM2.5 monthly mean per district
-  - [x] Derive: GSDP per capita, urbanization index, charging density
-  - [x] Compute district treatment assignment dummy variable
-  - [x] Collect and save final feature matrix to `data/processed/`
+### Phase 3: Data Engineering (DuckDB + Polars) [IN PROGRESS]
+- `[ ]` Refactor `duckdb_joins.py` for State-level JOINs instead of RTO-level
+- `[ ]` Update `polars_transform.py` to calculate state-wide EV penetration rates and correct treatment assignment logic
 
 ### Phase 4: Exploratory Data Analysis (EDA)
 - [x] Implement `src/eda/descriptive_stats.py`

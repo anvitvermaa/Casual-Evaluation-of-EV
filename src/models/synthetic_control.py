@@ -1,6 +1,6 @@
 """
-Causal Modeling Module: Synthetic Control Method (SCM)
-Constructs a synthetic control group, calculates ATE, and runs in-space placebo tests.
+Causal Modeling Module: Synthetic Control Method (SCM) (Macro-State Level)
+Constructs a synthetic control group from donor states, calculates ATE, and runs in-space placebo tests.
 """
 
 import os
@@ -30,25 +30,29 @@ def optimize_weights(X_treated, X_donor):
     return res.x
 
 def run_scm(outcome_var='ev_penetration_rate'):
-    print(f"\n--- Running SCM and Placebo Tests for: {outcome_var} ---")
+    print(f"\n--- Running Macro-State SCM and Placebo Tests for: {outcome_var} ---")
     
-    input_path = os.path.join(settings.PROCESSED_DATA_DIR, "final_feature_matrix.parquet")
+    input_path = os.path.join(settings.PROCESSED_DATA_DIR, "final_state_feature_matrix.parquet")
     output_dir = os.path.join(settings.MODELS_DIR, "scm_results")
     os.makedirs(output_dir, exist_ok=True)
     
+    if not os.path.exists(input_path):
+        print(f"File {input_path} not found. Ensure pipeline has run.")
+        return
+
     df = pd.read_parquet(input_path)
     df['date'] = pd.to_datetime(df['month'])
     treatment_date = pd.to_datetime(settings.TREATMENT_DATE)
     
-    treated_districts = ["MUMBAI", "PUNE", "THANE", "NASHIK", "NAGPUR", "AURANGABAD"]
-    donor_districts = [d for d in df['district'].unique() if d not in treated_districts]
+    treated_state = "MAHARASHTRA"
+    donor_states = [s for s in df['state'].unique() if s != treated_state]
     
-    # Create treated average series
-    df_treated = df[df['district'].isin(treated_districts)].groupby('date')[outcome_var].mean().reset_index()
+    # Create treated series
+    df_treated = df[df['state'] == treated_state][['date', outcome_var]].copy()
     df_treated.rename(columns={outcome_var: 'Treated'}, inplace=True)
     
     # Create donor matrix
-    df_donor = df[df['district'].isin(donor_districts)].pivot(index='date', columns='district', values=outcome_var)
+    df_donor = df[df['state'].isin(donor_states)].pivot(index='date', columns='state', values=outcome_var)
     
     panel = pd.merge(df_treated, df_donor, on='date', how='inner')
     panel.set_index('date', inplace=True)
@@ -63,10 +67,10 @@ def run_scm(outcome_var='ev_penetration_rate'):
     
     X_pre = panel[pre_mask]
     X_treated_pre = X_pre['Treated'].values
-    X_donor_pre = X_pre[donor_districts].values
+    X_donor_pre = X_pre[donor_states].values
     
     weights = optimize_weights(X_treated_pre, X_donor_pre)
-    synthetic_full = panel[donor_districts].values.dot(weights)
+    synthetic_full = panel[donor_states].values.dot(weights)
     panel['Synthetic'] = synthetic_full
     panel['Gap_Treated'] = panel['Treated'] - panel['Synthetic']
     
@@ -74,14 +78,18 @@ def run_scm(outcome_var='ev_penetration_rate'):
     rmspe_pre = np.sqrt(np.mean(panel.loc[pre_mask, 'Gap_Treated']**2))
     
     print(f"True Treated ATE: {ate_post:.4f} (Pre-treatment RMSPE: {rmspe_pre:.4f})")
-    
+    print("\nOptimal State Weights:")
+    for state, weight in zip(donor_states, weights):
+        if weight > 0.001:
+            print(f"  {state}: {weight:.3f}")
+            
     # --- Placebo Tests (In-space permutations) ---
     placebo_gaps = {}
     placebo_ates = []
     
-    for donor in donor_districts:
+    for donor in donor_states:
         # Pretend 'donor' is treated, rest of donors are the new donor pool
-        placebo_pool = [d for d in donor_districts if d != donor]
+        placebo_pool = [d for d in donor_states if d != donor]
         
         X_placebo_pre = X_pre[donor].values
         X_placebo_donor_pre = X_pre[placebo_pool].values
@@ -108,7 +116,7 @@ def run_scm(outcome_var='ev_penetration_rate'):
         # PM2.5 we expect a negative effect
         p_val = np.mean(np.array(placebo_ates) <= ate_post)
         
-    print(f"Placebo Pseudo P-value: {p_val:.4f} (based on {len(placebo_ates)} valid placebos)")
+    print(f"\nPlacebo Pseudo P-value: {p_val:.4f} (based on {len(placebo_ates)} valid placebos out of {len(donor_states)})")
     
     # --- Plotting Gap & Placebos ---
     plt.figure(figsize=(10, 6))
@@ -124,7 +132,7 @@ def run_scm(outcome_var='ev_penetration_rate'):
     plt.ylabel(f'Gap in {outcome_var}')
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(settings.REPORTS_DIR, "figures", f"scm_placebo_{outcome_var}.png"))
+    plt.savefig(os.path.join(settings.REPORTS_DIR, "figures", f"scm_state_placebo_{outcome_var}.png"))
     plt.close()
     
     # Save results dictionary
@@ -132,7 +140,7 @@ def run_scm(outcome_var='ev_penetration_rate'):
         'Metric': ['ATE', 'Pre_RMSPE', 'P_Value', 'Valid_Placebos'],
         'Value': [ate_post, rmspe_pre, p_val, len(placebo_ates)]
     })
-    results_df.to_csv(os.path.join(output_dir, f"scm_results_{outcome_var}.csv"), index=False)
+    results_df.to_csv(os.path.join(output_dir, f"scm_state_results_{outcome_var}.csv"), index=False)
 
 if __name__ == "__main__":
     run_scm('ev_penetration_rate')
