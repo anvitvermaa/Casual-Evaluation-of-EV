@@ -8,7 +8,7 @@ import os
 import sys
 import pandas as pd
 from econml.dml import CausalForestDML
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 import matplotlib.pyplot as plt
 import shap
 
@@ -25,6 +25,10 @@ def run_causal_forest():
     
     # Load data
     df = pd.read_parquet(input_path)
+
+    # Drop NaNs
+    cols = ['ev_penetration_rate', 'is_treated_district', 'gsdp_per_capita', 'urban_population_pct', 'charging_station_density']
+    df = df.dropna(subset=cols).copy()
     
     # We only use post-treatment data for evaluating the actual treatment effect heterogeneity
     treatment_date = pd.to_datetime(settings.TREATMENT_DATE)
@@ -38,15 +42,15 @@ def run_causal_forest():
     X_cols = ['gsdp_per_capita', 'urban_population_pct', 'charging_station_density']
     X = df_post[X_cols]
     
-    # Controls (W) - In this simple simulation, we pass X as W as well
-    W = df_post[['pm25_lag_1m']]
+    # Controls (W)
+    W = None
     
     print("Fitting CausalForestDML...")
     # Initialize Causal Forest
     model = CausalForestDML(
         model_y=RandomForestRegressor(n_estimators=100, max_depth=5, random_state=settings.RANDOM_SEED),
         model_t=RandomForestRegressor(n_estimators=100, max_depth=5, random_state=settings.RANDOM_SEED),
-        discrete_treatment=True,
+        discrete_treatment=False,
         n_estimators=500,
         random_state=settings.RANDOM_SEED
     )

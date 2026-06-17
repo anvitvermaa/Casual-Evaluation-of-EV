@@ -24,6 +24,10 @@ def run_did_model():
     # Load data
     df = pd.read_parquet(input_path)
     
+    # Drop rows with missing values in the variables used for regression
+    cols_to_use = ['ev_penetration_rate', 'did_treat_post', 'gsdp_per_capita', 'urban_population_pct', 'district', 'month']
+    df = df.dropna(subset=cols_to_use).copy()
+    
     # Define categorical variables for Fixed Effects
     df['district_cat'] = df['district'].astype('category')
     df['month_cat'] = df['month'].astype('category')

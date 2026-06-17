@@ -57,7 +57,7 @@ def engineer_features():
     # 4. Treatment Assignment
     print("Assigning treatment labels...")
     treatment_date = datetime.strptime(settings.TREATMENT_DATE, "%Y-%m-%d")
-    treated_districts = ["Mumbai", "Mumbai Suburban", "Thane", "Pune", "Nashik", "Nagpur", "Chhatrapati Sambhajinagar", "Raigad"]
+    treated_districts = ["MUMBAI", "PUNE", "THANE", "NASHIK", "NAGPUR", "AURANGABAD"]
     
     lf = lf.with_columns([
         # Dummy variable: 1 if district is in treatment group, 0 otherwise

@@ -40,7 +40,7 @@ def run_scm(outcome_var='ev_penetration_rate'):
     df['date'] = pd.to_datetime(df['month'])
     treatment_date = pd.to_datetime(settings.TREATMENT_DATE)
     
-    treated_districts = ["Mumbai", "Mumbai Suburban", "Thane", "Pune", "Nashik", "Nagpur", "Chhatrapati Sambhajinagar", "Raigad"]
+    treated_districts = ["MUMBAI", "PUNE", "THANE", "NASHIK", "NAGPUR", "AURANGABAD"]
     donor_districts = [d for d in df['district'].unique() if d not in treated_districts]
     
     # Create treated average series
@@ -52,6 +52,11 @@ def run_scm(outcome_var='ev_penetration_rate'):
     
     panel = pd.merge(df_treated, df_donor, on='date', how='inner')
     panel.set_index('date', inplace=True)
+    
+    # Forward and back fill missing values for models
+    panel.ffill(inplace=True)
+    panel.bfill(inplace=True)
+    panel.fillna(0, inplace=True) # Final safety net
     
     pre_mask = panel.index < treatment_date
     post_mask = panel.index >= treatment_date

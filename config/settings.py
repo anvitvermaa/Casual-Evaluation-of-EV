@@ -26,11 +26,13 @@ RANDOM_SEED = 42
 TREATMENT_DATE = "2025-05-23" # Policy announcement date
 TREATMENT_MONTH = "2025-05" # Policy announcement month
 
-# SCM Configuration
-PRE_TREATMENT_START = "2019-01"
-PRE_TREATMENT_END = "2025-05"
-POST_TREATMENT_START = "2025-06"
-POST_TREATMENT_END = "2026-05"
+# SCM Configuration — Maharashtra EV Policy 2025
+# Pre-treatment: Jan 2022 – Apr 2025 (38 months of baseline)
+# Post-treatment: May 2025 – present (policy divergence window)
+PRE_TREATMENT_START = "2022-01"
+PRE_TREATMENT_END = "2025-04"
+POST_TREATMENT_START = "2025-05"
+POST_TREATMENT_END = "2026-06"
 RMSPE_TOLERANCE = 0.15
 
 # Real Data API Endpoints (To be provided by the USER)

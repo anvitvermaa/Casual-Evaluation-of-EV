@@ -1,85 +1,115 @@
-"""
-Data Ingestion Module: Air Quality Data
-Generates synthetic Hourly PM2.5 and NOx data for local pipeline testing.
-Will be replaced by real CPCB API data later per user instruction.
-"""
-
 import os
-import sys
+import requests
 import polars as pl
-from datetime import datetime, timedelta
-import numpy as np
+from pathlib import Path
+from datetime import datetime
+import time
+import sys
 
-# Add project root to path for config imports
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 from config import settings
 
-def generate_mock_air_quality_data(output_path: str):
-    """Generates synthetic hourly AQI data."""
-    print("Generating mock hourly air quality records...")
-    
-    np.random.seed(settings.RANDOM_SEED + 1)
-    
-    districts = [
-        "Mumbai", "Mumbai Suburban", "Thane", "Pune", "Nashik", "Nagpur",
-        "Chhatrapati Sambhajinagar", "Raigad", "Kolhapur", "Solapur", "Satara",
-        "Sangli", "Jalgaon", "Ahmednagar", "Latur", "Beed"
-    ]
-    
-    start_date = datetime.strptime(settings.PRE_TREATMENT_START, "%Y-%m")
-    end_date = datetime.strptime(settings.POST_TREATMENT_END, "%Y-%m")
-    
-    date_range = pl.datetime_range(
-        start=start_date,
-        end=end_date,
-        interval="1h",
-        eager=True
-    )
-    
-    df_dates = pl.DataFrame({"datetime": date_range})
-    df_districts = pl.DataFrame({"district": districts})
-    
-    df = df_dates.join(df_districts, how="cross")
-    n_records = len(df)
-    print(f"Base grid created with {n_records} hourly records.")
-    
-    base_pm25 = np.random.normal(50, 15, n_records)
-    months = df["datetime"].dt.month()
-    winter_multiplier = pl.when(months.is_in([11, 12, 1, 2])).then(1.5).otherwise(1.0)
-    
-    df = df.with_columns([
-        (pl.lit(base_pm25) * winter_multiplier).alias("pm25_base")
-    ])
-    
-    treated_districts = ["Mumbai", "Mumbai Suburban", "Thane", "Pune", "Nashik", "Nagpur", "Chhatrapati Sambhajinagar", "Raigad"]
-    treatment_date = datetime.strptime(settings.TREATMENT_DATE, "%Y-%m-%d")
-    
-    mask = (df["datetime"] >= treatment_date) & (df["district"].is_in(treated_districts))
-    
-    df = df.with_columns([
-        pl.when(mask).then(pl.col("pm25_base") * 0.95).otherwise(pl.col("pm25_base")).alias("pm25"),
-        (pl.col("pm25_base") * 0.6 + np.random.normal(10, 5, n_records)).alias("nox")
-    ]).drop("pm25_base")
-    
-    df = df.with_columns([
-        (pl.lit("MH_") + pl.col("district").str.slice(0, 3).str.to_uppercase() + pl.lit("_01")).alias("station_id")
-    ])
-    
-    print(f"Writing dataset to {output_path} as CSV...")
-    df.write_csv(output_path)
-    print("Mock air quality data generation complete.")
+API_KEY = os.getenv("OPENAQ_API_KEY", "5788e6181e31d6fd79b9046ab7d00f7dc87205d383f8a1b1cd0a898d21546878")
+HEADERS = {'X-API-Key': API_KEY}
+BASE_URL = "https://api.openaq.org/v3"
 
-def fetch_data():
-    """Main execution function."""
-    output_dir = os.path.join(settings.RAW_DATA_DIR, "air_quality")
-    os.makedirs(output_dir, exist_ok=True)
-    output_file = os.path.join(output_dir, "maharashtra_aqi_2019_2026.csv")
+# Major RTO centers mapped to their coordinates for bounding box search (25km radius)
+CITIES = {
+    'Mumbai': '19.0760,72.8777',
+    'Pune': '18.5204,73.8567',
+    'Nagpur': '21.1458,79.0882',
+    'Nashik': '19.9975,73.7898',
+    'Thane': '19.2183,72.9781',
+    'Aurangabad': '19.8762,75.3433',
+    'Solapur': '17.6599,75.9064',
+    'Kolhapur': '16.7050,74.2433'
+}
+
+def get_locations(coords):
+    url = f"{BASE_URL}/locations"
+    params = {'coordinates': coords, 'radius': 25000, 'parameter': 'pm25', 'limit': 100}
+    r = requests.get(url, headers=HEADERS, params=params, timeout=15)
+    if r.status_code == 200:
+        return r.json().get('results', [])
+    return []
+
+def get_pm25_sensor_id(location_id):
+    url = f"{BASE_URL}/locations/{location_id}/sensors"
+    r = requests.get(url, headers=HEADERS, timeout=15)
+    if r.status_code == 200:
+        for s in r.json().get('results', []):
+            if s['parameter']['name'].lower() == 'pm25':
+                return s['id']
+    return None
+
+def fetch_daily_data(sensor_id):
+    all_data = []
+    page = 1
+    while True:
+        url = f"{BASE_URL}/sensors/{sensor_id}/days"
+        params = {'limit': 1000, 'page': page}
+        r = requests.get(url, headers=HEADERS, params=params, timeout=20)
+        
+        if r.status_code == 200:
+            results = r.json().get('results', [])
+            if not results: break
+            all_data.extend(results)
+            page += 1
+            if len(results) < 1000: break # Last page
+        elif r.status_code == 429:
+            print("Rate limit hit, sleeping 5s...")
+            time.sleep(5)
+        else:
+            break
+            
+    return all_data
+
+def main():
+    print("Fetching OpenAQ Data (Real PM2.5)...")
+    records = []
     
-    if os.path.exists(output_file):
-        print(f"Data already exists at {output_file}. Skipping ingestion.")
+    for city, coords in CITIES.items():
+        print(f"-> Processing {city}...")
+        locations = get_locations(coords)
+        
+        for loc in locations:
+            loc_id = loc['id']
+            sensor_id = get_pm25_sensor_id(loc_id)
+            
+            if not sensor_id: continue
+                
+            daily_data = fetch_daily_data(sensor_id)
+            for d in daily_data:
+                dt_str = d['period']['datetimeFrom']['utc']
+                # Parse '2025-01-01T00:00:00Z' to '2025-01'
+                year_month = dt_str[:7]
+                
+                records.append({
+                    "rto_name": city.upper(), # Map back to RTO style
+                    "station_id": str(loc_id),
+                    "year_month": year_month,
+                    "pm25_daily_avg": d.get('summary', {}).get('avg', d.get('value', 0))
+                })
+                
+        time.sleep(1) # Prevent rate limiting
+
+    if not records:
+        print("Error: No data fetched from OpenAQ.")
         return
         
-    generate_mock_air_quality_data(output_file)
+    # Aggregate daily into monthly RTO-level averages
+    df = pl.DataFrame(records)
+    
+    # Filter 2022-2026
+    df = df.filter((pl.col("year_month") >= "2022-01") & (pl.col("year_month") <= "2026-06"))
+    
+    monthly_df = df.group_by(["rto_name", "year_month"]).agg(
+        pl.col("pm25_daily_avg").mean().alias("pm25_monthly_mean")
+    ).sort(["rto_name", "year_month"])
+    
+    out_path = settings.RAW_DATA_DIR / "air_quality" / "openaq_pm25.parquet"
+    monthly_df.write_parquet(out_path)
+    print(f"Successfully processed {len(monthly_df)} monthly records -> {out_path}")
 
 if __name__ == "__main__":
-    fetch_data()
+    main()
