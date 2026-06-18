@@ -1,0 +1,2 @@
+Estimator,ATT,SE_jk,t_stat,CI_lo_95,CI_hi_95,Sig_5pct,Sig_1pct
+SDiD (Arkhangelsky et al. 2021),-0.0662,0.338,-0.1959,-0.7287,0.5963,False,False
