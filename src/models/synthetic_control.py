@@ -30,7 +30,7 @@ from config import settings
 
 # ── EXPLICIT DEPENDENCY BOUNDARY ──
 try:
-    from synthdid.model import Synthdid
+    from synthdid.synthdid import Synthdid
 except ImportError as e:
     raise ImportError(
         "\n[FATAL ERROR] The official d2cml-ai/synthdid library is not installed or the environment "
@@ -84,17 +84,16 @@ def execute_sdid_pipeline():
     # 4. Initialize Official Synthdid API
     print("[MODEL] Initializing SDiD Estimator with L2 Regularization & Intercept Shifts...")
     sdid_model = Synthdid(
-        df=df,
+        data=df,
         outcome='ev_penetration_rate',
         treatment='treated',
         unit='state',
         time='time_str',
-        covariates=['GSDP_per_capita', 'Urbanization_Rate'],
-        cov_method='optimized'  # Invokes Arkhangelsky's covariate-augmented matrix (Eq 4.1)
+        covariates=['GSDP_per_capita', 'Urbanization_Rate']
     )
 
-    # 5. Fit the Model
-    sdid_model.fit()
+    # 5. Fit the Model (Invokes Arkhangelsky's covariate-augmented matrix (Eq 4.1) via cov_method)
+    sdid_model.fit(cov_method='optimized')
     tau_hat = sdid_model.tau
     
     # 6. Extract Genuine Standard Errors via Placebo Resampling

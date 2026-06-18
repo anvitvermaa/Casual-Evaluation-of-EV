@@ -48,7 +48,7 @@ def engineer_features():
         (pl.col("ev_penetration_rate") - pl.col("ev_penetration_rate").shift(1)).over("state").alias("ev_penetration_delta"),
         
         # 3-Month rolling average (smoothing volatility)
-        pl.col("ev_penetration_rate").rolling_mean(window_size=3, min_samples=1).over("state").alias("ev_pen_rolling_3m"),
+        pl.col("ev_penetration_rate").rolling_mean(window_size=3).over("state").alias("ev_pen_rolling_3m"),
     ])
     
     # 4. Treatment Assignment (Macro-State)

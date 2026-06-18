@@ -1,15 +1,10 @@
 name: ev-policy-sdid
 channels:
   - conda-forge
-  - defaults
 dependencies:
   # 1. Isolate the Core Execution Engine to bypass distutils/pkgutil deprecations
   - python=3.10.13
   
-  # 2. Native Data Engineering Stack
-  - duckdb=0.10.0
-  - polars=0.20.15
-  - pyarrow=15.0.0
   - pandas=2.2.0
   - numpy=1.23.5  # Crucial: synthdid.py enforces this exact version during build
   - scipy=1.12.0
@@ -22,7 +17,11 @@ dependencies:
   # 4. Pip for the official GitHub package compilation
   - pip
   - pip:
+      - duckdb==0.10.0
+      - polars==0.20.15
+      - pyarrow==15.0.0
+      - python-dotenv
       - setuptools==69.1.1
       - wheel==0.42.0
       # The state-of-the-art Causal Inference library
-      - git+https://github.com/d2cml-ai/synthdid.py@master
+      - git+https://github.com/d2cml-ai/synthdid.py
