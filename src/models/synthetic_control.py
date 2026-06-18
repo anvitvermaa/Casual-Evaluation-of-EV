@@ -144,4 +144,3 @@ def run_scm(outcome_var='ev_penetration_rate'):
 
 if __name__ == "__main__":
     run_scm('ev_penetration_rate')
-    run_scm('pm25_monthly_mean')

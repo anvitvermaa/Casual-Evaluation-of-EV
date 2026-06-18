@@ -48,10 +48,7 @@ def engineer_features():
         (pl.col("ev_penetration_rate") - pl.col("ev_penetration_rate").shift(1)).over("state").alias("ev_penetration_delta"),
         
         # 3-Month rolling average (smoothing volatility)
-        pl.col("ev_penetration_rate").rolling_mean(window_size=3, min_periods=1).over("state").alias("ev_pen_rolling_3m"),
-        
-        # Lagged PM2.5 (to control for past pollution driving current EV demand)
-        pl.col("pm25_monthly_mean").shift(1).over("state").alias("pm25_lag_1m")
+        pl.col("ev_penetration_rate").rolling_mean(window_size=3, min_samples=1).over("state").alias("ev_pen_rolling_3m"),
     ])
     
     # 4. Treatment Assignment (Macro-State)
