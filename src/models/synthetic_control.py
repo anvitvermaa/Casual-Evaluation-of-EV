@@ -140,6 +140,13 @@ def execute_sdid_pipeline():
     
     out_file = os.path.join(output_dir, "sdid_results_official.csv")
     results_df.to_csv(out_file, index=False)
+    
+    # Export weights for empirical validation
+    donors = [s for s in df['state'].unique() if s != 'MAHARASHTRA']
+    weights = sdid_model.omega
+    weights_df = pd.DataFrame({'State': donors, 'Weight': weights})
+    weights_df.to_csv(os.path.join(output_dir, "sdid_unit_weights.csv"), index=False)
+    
     print(f"[SUCCESS] Mathematical outputs verified and persisted to {out_file}.\n")
 
 if __name__ == "__main__":

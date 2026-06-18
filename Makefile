@@ -41,3 +41,6 @@ clean:
 	rm -rf reports/tables/*
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 	@echo "Cleaned processed data, models, reports, and caches."
+
+run-sdid:
+	bash run_pipeline.sh
