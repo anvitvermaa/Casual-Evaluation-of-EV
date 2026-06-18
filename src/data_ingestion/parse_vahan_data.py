@@ -1,128 +1,182 @@
-import os
-import openpyxl
-import polars as pl
-from pathlib import Path
-from tqdm import tqdm
-import sys
+"""
+Data Ingestion Module: Vahan State-Level Panel Parser
+Reads all state × year Excel files from data/raw/vehicle_registrations/states/,
+extracts monthly EV and total registrations, and outputs a clean unified CSV
+ready for DuckDB ingestion.
 
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+File naming convention expected: <state>_<year>.xlsx
+e.g.: maharashtra_2022.xlsx, gujarat_2023.xlsx
+"""
+
+import os
+import sys
+import re
+import glob
+import openpyxl
+import pandas as pd
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from config import settings
 
-def clean_number(x):
-    if x is None: return 0
-    s = str(x).replace(',', '').strip()
-    return int(s) if s.isdigit() else 0
+# All known Electric fuel row labels in Vahan
+EV_FUEL_LABELS = {"ELECTRIC(BOV)", "STRONG HYBRID EV"}
 
-def extract_row_data(ws, search_col_idx, search_val, month_cols):
-    """Finds a specific row based on a column value and extracts the 12 month columns."""
-    for row in ws.iter_rows(min_row=5, values_only=True):
-        if row[search_col_idx] and search_val.lower() in str(row[search_col_idx]).lower():
-            return {month: clean_number(row[idx]) for month, idx in month_cols.items()}
-    return {month: 0 for month in month_cols.keys()}
+# Month column order in the Vahan Excel layout
+MONTH_COLS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+              "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 
-def get_month_indices(ws):
-    for r_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=5, values_only=True), 1):
-        if 'JAN' in [str(x).strip() for x in row if x]:
-            months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
-            month_idx = {}
-            for idx, val in enumerate(row):
-                if val and str(val).strip() in months:
-                    month_idx[str(val).strip()] = idx
-            return month_idx
-    return None
+# Map state filenames to clean standardized state names
+STATE_NAME_MAP = {
+    "maharashtra":    "MAHARASHTRA",
+    "gujarat":        "GUJARAT",
+    "karnataka":      "KARNATAKA",
+    "tamilnadu":      "TAMIL NADU",
+    "andhrapradesh":  "ANDHRA PRADESH",
+    "telengana":      "TELANGANA",
+    "madhyapradesh":  "MADHYA PRADESH",
+    "rajasthan":      "RAJASTHAN",
+    "uttarpradesh":   "UTTAR PRADESH",
+}
 
-def main():
-    print("Parsing Vahan Data...")
-    data_dir = Path("vahan data")
-    
-    # 1. Calculate Baseline EV Distribution (2024)
-    baseline_path = data_dir / "rto_fuel_baseline_2024.xlsx"
-    wb = openpyxl.load_workbook(baseline_path, read_only=True)
+
+def parse_excel_file(filepath: str, state_name: str, year: int) -> list[dict]:
+    """
+    Parse a single Vahan Excel file.
+    Returns a list of dicts with keys: state, year_month, ev_registrations, total_registrations.
+    """
+    wb = openpyxl.load_workbook(filepath, data_only=True)
     ws = wb.active
-    
-    # Find Electric column
-    header_row = list(ws.iter_rows(min_row=4, max_row=4, values_only=True))[0]
-    ev_col_idx = None
-    for i, val in enumerate(header_row):
-        if val and 'ELECTRIC(BOV)' in str(val):
-            ev_col_idx = i
+
+    # --- Step 1: Find the header row containing month names (JAN, FEB, ...) ---
+    header_row_idx = None
+    for row_idx, row in enumerate(ws.iter_rows(values_only=True)):
+        row_str = [str(c).strip().upper() if c else "" for c in row]
+        if "JAN" in row_str and "FEB" in row_str:
+            header_row_idx = row_idx
+            # Build a col_index → month_name mapping
+            month_col_map = {}
+            for col_idx, cell_val in enumerate(row_str):
+                if cell_val in MONTH_COLS:
+                    month_col_map[col_idx] = cell_val
             break
-            
-    rto_ev_shares = {}
-    total_evs = 0
-    for row in ws.iter_rows(min_row=5, values_only=True):
-        rto_name = str(row[1]).strip()
-        if not rto_name or rto_name == 'None': continue
-        ev_count = clean_number(row[ev_col_idx])
-        rto_ev_shares[rto_name] = ev_count
-        total_evs += ev_count
-        
-    # Convert to percentages
-    for rto in rto_ev_shares:
-        rto_ev_shares[rto] = rto_ev_shares[rto] / total_evs if total_evs > 0 else 0
-        
-    print(f"Loaded EV baseline for {len(rto_ev_shares)} RTOs.")
 
-    # 2. Load State EV totals per month from Fuel files
-    state_ev_monthly = {} # Format: { '2022-01': 1500, ... }
-    month_map = {'JAN':'01', 'FEB':'02', 'MAR':'03', 'APR':'04', 'MAY':'05', 'JUN':'06', 
-                 'JUL':'07', 'AUG':'08', 'SEP':'09', 'OCT':'10', 'NOV':'11', 'DEC':'12'}
-                 
-    for year in ['22', '23', '24', '25', '26']:
-        fuel_file = data_dir / f"Fuel/fuel_{year}.xlsx"
-        if not fuel_file.exists(): continue
-        
-        wb = openpyxl.load_workbook(fuel_file, read_only=True)
-        ws = wb.active
-        m_idx = get_month_indices(ws)
-        ev_data = extract_row_data(ws, 1, 'ELECTRIC(BOV)', m_idx)
-        
-        for m_name, val in ev_data.items():
-            state_ev_monthly[f"20{year}-{month_map[m_name]}"] = val
-            
-    print(f"Loaded State EV monthly data for {len(state_ev_monthly)} months.")
+    if header_row_idx is None:
+        print(f"  [WARNING] Could not find month header row in {filepath}. Skipping.")
+        return []
 
-    # 3. Load RTO Totals per month and construct final dataset
-    final_records = []
-    
-    for year in ['22', '23', '24', '25', '26']:
-        rto_file = data_dir / f"RTO/rto_{year}.xlsx"
-        if not rto_file.exists(): continue
-        
-        wb = openpyxl.load_workbook(rto_file, read_only=True)
-        ws = wb.active
-        m_idx = get_month_indices(ws)
-        
-        for row in ws.iter_rows(min_row=5, values_only=True):
-            rto_name = str(row[1]).strip()
-            if not rto_name or rto_name == 'None': continue
-            
-            for m_name, idx in m_idx.items():
-                year_month = f"20{year}-{month_map[m_name]}"
-                total_registrations = clean_number(row[idx])
-                
-                # Apply downscaling logic
-                state_ev = state_ev_monthly.get(year_month, 0)
-                rto_share = rto_ev_shares.get(rto_name, 0)
-                estimated_evs = int(state_ev * rto_share)
-                
-                ev_penetration = (estimated_evs / total_registrations * 100) if total_registrations > 0 else 0
-                
-                final_records.append({
-                    "rto_name": rto_name,
-                    "year_month": year_month,
-                    "total_registrations": total_registrations,
-                    "ev_registrations": estimated_evs,
-                    "ev_penetration_rate": ev_penetration
-                })
+    # --- Step 2: Collect all data rows (rows below header) ---
+    all_rows = list(ws.iter_rows(values_only=True))
+    data_rows = all_rows[header_row_idx + 1:]
 
-    df = pl.DataFrame(final_records)
-    # Filter to standard timeline
-    df = df.filter((pl.col("year_month") >= "2022-01") & (pl.col("year_month") <= "2026-06"))
-    
-    out_path = settings.RAW_DATA_DIR / "vehicle_registrations" / "vahan_panel.parquet"
-    df.write_parquet(out_path)
-    print(f"Successfully processed {len(df)} records -> {out_path}")
+    # --- Step 3: Build monthly totals for ev and all fuels ---
+    # ev_by_month[month_name] = sum of EV rows for that month
+    ev_by_month    = {m: 0 for m in MONTH_COLS}
+    total_by_month = {m: 0 for m in MONTH_COLS}
+
+    for row in data_rows:
+        # Fuel label is typically in column index 1
+        if len(row) < 3:
+            continue
+        fuel_label = str(row[1]).strip().upper() if row[1] else ""
+
+        # Strip non-breaking spaces and whitespace
+        fuel_label = re.sub(r"\s+", " ", fuel_label.replace("\xa0", " ")).strip()
+
+        if not fuel_label or fuel_label in ("", "FUEL", "S NO"):
+            continue
+
+        for col_idx, month_name in month_col_map.items():
+            if col_idx >= len(row):
+                continue
+            raw_val = row[col_idx]
+            if raw_val is None:
+                continue
+            # Vahan stores numbers as strings with commas e.g. "1,35,985"
+            try:
+                val = int(str(raw_val).replace(",", "").strip())
+            except ValueError:
+                continue
+
+            total_by_month[month_name] += val
+            if fuel_label in EV_FUEL_LABELS:
+                ev_by_month[month_name] += val
+
+    # --- Step 4: Convert to row-per-month records ---
+    records = []
+    for month_name in MONTH_COLS:
+        month_num = MONTH_COLS.index(month_name) + 1
+        year_month = f"{year}-{month_num:02d}"
+
+        # For 2026 files the dashboard only has Jan–Jun; skip zero months
+        if total_by_month[month_name] == 0:
+            continue
+
+        records.append({
+            "state":               state_name,
+            "year_month":          year_month,
+            "ev_registrations":    ev_by_month[month_name],
+            "total_registrations": total_by_month[month_name],
+        })
+
+    return records
+
+
+def parse_all_state_files():
+    """Main entry point: parse all 45 state files and write a unified CSV."""
+    states_dir = os.path.join(settings.RAW_DATA_DIR, "vehicle_registrations", "states")
+    output_path = os.path.join(settings.RAW_DATA_DIR, "vehicle_registrations", "vahan_state_panel.csv")
+
+    all_files = sorted(glob.glob(os.path.join(states_dir, "*.xlsx")))
+    if not all_files:
+        print(f"[ERROR] No .xlsx files found in {states_dir}")
+        return
+
+    print(f"Found {len(all_files)} files. Parsing...")
+
+    all_records = []
+    for filepath in all_files:
+        filename = os.path.basename(filepath).replace(".xlsx", "")
+        parts = filename.rsplit("_", 1)       # split on the LAST underscore only
+        if len(parts) != 2:
+            print(f"  [SKIP] Unrecognised filename format: {filename}")
+            continue
+
+        state_key, year_str = parts[0], parts[1]
+        if state_key not in STATE_NAME_MAP:
+            print(f"  [SKIP] Unknown state key '{state_key}' in {filename}")
+            continue
+        try:
+            year = int(year_str)
+        except ValueError:
+            print(f"  [SKIP] Cannot parse year from '{year_str}' in {filename}")
+            continue
+
+        state_name = STATE_NAME_MAP[state_key]
+        print(f"  Parsing {filename}  →  state={state_name}, year={year}")
+
+        try:
+            records = parse_excel_file(filepath, state_name, year)
+            all_records.extend(records)
+            print(f"    → {len(records)} monthly rows extracted.")
+        except Exception as e:
+            print(f"    [ERROR] Failed to parse {filename}: {e}")
+
+    if not all_records:
+        print("[ERROR] No records extracted. Check file formats and paths.")
+        return
+
+    df = pd.DataFrame(all_records)
+    df["ev_penetration_rate"] = df["ev_registrations"] / df["total_registrations"] * 100
+    df = df.sort_values(["state", "year_month"]).reset_index(drop=True)
+
+    df.to_csv(output_path, index=False)
+    print(f"\n✅ Panel CSV written → {output_path}")
+    print(f"   Total rows : {len(df)}")
+    print(f"   States     : {sorted(df['state'].unique())}")
+    print(f"   Date range : {df['year_month'].min()} → {df['year_month'].max()}")
+    print(f"\nSample rows:")
+    print(df.head(15).to_string(index=False))
+
 
 if __name__ == "__main__":
-    main()
+    parse_all_state_files()
