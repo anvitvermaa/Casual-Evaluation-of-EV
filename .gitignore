@@ -1,11 +1,12 @@
 venv/
 __pycache__/
 .env
-data/raw/*
-data/processed/*
+data/
+models/
+paper/
+reports/
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 .DS_Store
 *.parquet
 *.csv
-paper/
