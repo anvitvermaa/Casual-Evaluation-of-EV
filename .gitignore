@@ -10,3 +10,6 @@ reports/
 .DS_Store
 *.parquet
 *.csv
+*.zip
+paper_export_ieee/
+paper_new_ieee/

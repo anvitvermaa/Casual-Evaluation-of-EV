@@ -1,139 +1,138 @@
 """
 Causal Modeling Module: Synthetic Difference-in-Differences (SDiD)
-Maharashtra EV Policy Evaluation (N=9 state panel, Jan 2022 – Jun 2026).
+Maharashtra EV Policy Evaluation — N=16 macro-state panel, Jan 2022–Jun 2026.
 
 Implements the d2cml-ai/synthdid official Python API
 as defined by Arkhangelsky et al. (2021, AER 111(12), 4088-4118).
 
-Methodological Defences (per Reviewer 2 critique):
-  1. Low-N p-value floor (Flaw 1): Uses placebo SE (model.se) not permutation p-value.
-     Minimum permutation p-value with N=9 is 1/9 ≈ 0.111, making it useless.
-  2. Convex Hull Violation (Flaw 2): SDiD's omega_intercept=True and lambda_intercept=True
-     (defaults) add unit and time fixed-effect shifts, allowing vertical extrapolation
-     beyond the convex hull of the donor pool.
-  3. Karnataka Anchor Risk (Flaw 3): L2 ridge regularization (zeta_omega auto-computed
-     from noise_level in sdid.py) disperses donor weights. Validated post-fit.
-  4. Covariate OVB (Flaw 4): GSDP_per_capita and Urbanization_Rate passed as covariates
-     with cov_method='optimized' (Arkhangelsky et al., Eq 4.1).
+Dual-Specification Architecture:
+  1. Main Model       (N=16): Maharashtra vs. all 15 donor states.
+  2. Spatial Donut Hole (N=11): Maharashtra vs. 10 non-bordering donors.
+     Bordering states dropped: Gujarat, Madhya Pradesh, Chhattisgarh,
+     Telangana, Karnataka (SUTVA cross-border spillover check).
 
-API contract verified against synthdid==0.10.1 source:
-  - Synthdid(data, unit, time, treatment, outcome, covariates)
-  - .fit(cov_method='optimized') → stores ATT in self.att (float), weights in
-    self.weights = {"lambda": [array], "omega": [array]}
-  - .vcov(method="placebo", n_reps=N) → stores SE in self.se (float), returns self
-  - .plot_outcomes() / .plot_weights() → returns list of matplotlib Figure objects
+Methodological Defences:
+  - Placebo SE via .vcov(method='placebo', n_reps=200): bypasses the
+    1/N p-value floor issue for small macro-panels.
+  - cov_method='optimized': projects out GSDP and Urbanisation OVB
+    (Arkhangelsky et al., Eq 4.1).
+  - L2 ridge regularisation (default zeta_omega from synthdid): disperses
+    donor weights away from single-state anchor fragility.
+  - Consecutive 0-based integer time index: required by synthdid internals
+    (CRITICAL — do NOT use YYYYMM strings).
 
-CRITICAL: time column must use consecutive 0-based integer indices (0,1,...,T-1),
-NOT YYYYMM strings. The library computes T1 = max(time) - treatment_time + 1, which
-requires consecutive integers to be valid.
+Outputs:
+  - models/scm_results/sdid_unified_results.csv
+  - paper/tables/main_empirical_results.tex
+  - reports/figures/sdid_{model}_outcomes_{i}.png
+  - reports/figures/sdid_{model}_weights_{i}.png
 """
 
 import os
 import sys
-import numpy as np
 import pandas as pd
 import warnings
 import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend for headless/server execution
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 warnings.filterwarnings('ignore')
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 from config import settings
 
-# ── EXPLICIT DEPENDENCY BOUNDARY ──────────────────────────────────────────────
 try:
     from synthdid.synthdid import Synthdid
 except ImportError as e:
     raise ImportError(
-        "\n[FATAL ERROR] The official d2cml-ai/synthdid library is not installed "
-        "or the environment is improperly isolated. Execute within the Python 3.10 "
-        "conda environment defined in environment.yml.\n"
-        f"Original error: {str(e)}"
+        "\n[FATAL] d2cml-ai/synthdid not found in environment. "
+        "Activate: conda activate ev-policy-sdid\n"
+        f"Original: {e}"
     )
-# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Economic Covariates: all 16 states ──────────────────────────────────────
+# Source: RBI Handbook of Statistics on Indian States 2023-24 (Table 1)
+# Urbanisation: Census 2011 projections (Office of the Registrar General)
+ECONOMIC_DATA = pd.DataFrame([
+    {'state': 'MAHARASHTRA',    'GSDP_per_capita': 274000, 'Urbanization_Rate': 45.2},
+    {'state': 'KARNATAKA',      'GSDP_per_capita': 278000, 'Urbanization_Rate': 38.6},
+    {'state': 'GUJARAT',        'GSDP_per_capita': 275000, 'Urbanization_Rate': 42.6},
+    {'state': 'TAMIL NADU',     'GSDP_per_capita': 273000, 'Urbanization_Rate': 48.4},
+    {'state': 'TELANGANA',      'GSDP_per_capita': 308000, 'Urbanization_Rate': 38.9},
+    {'state': 'ANDHRA PRADESH', 'GSDP_per_capita': 219000, 'Urbanization_Rate': 29.6},
+    {'state': 'MADHYA PRADESH', 'GSDP_per_capita': 140000, 'Urbanization_Rate': 27.6},
+    {'state': 'RAJASTHAN',      'GSDP_per_capita': 156000, 'Urbanization_Rate': 24.8},
+    {'state': 'UTTAR PRADESH',  'GSDP_per_capita': 83000,  'Urbanization_Rate': 22.3},
+    {'state': 'KERALA',         'GSDP_per_capita': 243000, 'Urbanization_Rate': 47.7},
+    {'state': 'HARYANA',        'GSDP_per_capita': 247000, 'Urbanization_Rate': 34.8},
+    {'state': 'WEST BENGAL',    'GSDP_per_capita': 130000, 'Urbanization_Rate': 31.9},
+    {'state': 'PUNJAB',         'GSDP_per_capita': 185000, 'Urbanization_Rate': 37.5},
+    {'state': 'ODISHA',         'GSDP_per_capita': 145000, 'Urbanization_Rate': 16.7},
+    {'state': 'BIHAR',          'GSDP_per_capita': 57000,  'Urbanization_Rate': 11.3},
+    {'state': 'CHHATTISGARH',   'GSDP_per_capita': 130000, 'Urbanization_Rate': 23.2},
+])
+
+# Bordering states dropped in the Donut Hole specification
+BORDER_STATES = ["GUJARAT", "MADHYA PRADESH", "CHHATTISGARH", "TELANGANA", "KARNATAKA"]
 
 
-def execute_sdid_pipeline():
-    print("\n" + "=" * 70)
-    print("SYNTHETIC DIFFERENCE-IN-DIFFERENCES (Arkhangelsky et al., 2021)")
-    print("Maharashtra EV Policy 2025 — Causal Evaluation")
-    print("=" * 70)
+def run_sdid(df_input: pd.DataFrame, model_name: str, fig_dir: str) -> dict:
+    """
+    Execute the SDiD estimator on the supplied panel dataframe.
 
-    # ── 1. Load Panel Data ────────────────────────────────────────────────────
-    input_path = os.path.join(settings.PROCESSED_DATA_DIR, "final_state_feature_matrix.parquet")
-    output_dir = os.path.join(settings.MODELS_DIR, "scm_results")
-    os.makedirs(output_dir, exist_ok=True)
+    Parameters
+    ----------
+    df_input   : Prepared panel — columns: state, year_month, outcome, GSDP, Urban
+    model_name : Human-readable label for logging/saving
+    fig_dir    : Directory to save outcome/weight trajectory plots
 
-    df = pd.read_parquet(input_path)
-    df['month'] = pd.to_datetime(df['month'])
+    Returns
+    -------
+    dict with ATT, SE, CI, donor count, and significance flag.
+    """
+    print(f"\n{'─'*60}")
+    print(f"  MODEL: {model_name}")
+    print(f"  Donors (N₀): {df_input['state'].nunique() - 1}")
+    print(f"{'─'*60}")
 
-    print(f"[DATA] Panel: {len(df)} observations, {df['state'].nunique()} states, "
-          f"{df['month'].nunique()} months")
-    print(f"[DATA] Date range: {df['month'].min().date()} to {df['month'].max().date()}")
-    print(f"[DATA] States: {sorted(df['state'].unique().tolist())}")
+    df = df_input.copy()
+    df['month'] = pd.to_datetime(df['year_month'])
 
-    # ── 2. Build Consecutive Integer Time Index ───────────────────────────────
-    # CRITICAL: synthdid computes T1 = max(time) - treatment_time + 1
-    # This is only valid when time uses 0,1,...,T-1 (not YYYYMM integers).
+    # ── Consecutive Integer Time Index ───────────────────────────────────────
     sorted_months = sorted(df['month'].unique())
-    time_map = {m: i for i, m in enumerate(sorted_months)}
-    df['time'] = df['month'].map(time_map)
+    time_map      = {m: i for i, m in enumerate(sorted_months)}
+    df['time']    = df['month'].map(time_map)
 
-    # ── 3. Merge Economic Covariates (prevents OVB — Flaw 4) ──────────────────
-    # Source: RBI State Finances Report 2023-24, Census 2011 urbanisation projections
-    economic_data = pd.DataFrame([
-        {'state': 'MAHARASHTRA',    'GSDP_per_capita': 274000, 'Urbanization_Rate': 45.2},
-        {'state': 'KARNATAKA',      'GSDP_per_capita': 278000, 'Urbanization_Rate': 38.6},
-        {'state': 'GUJARAT',        'GSDP_per_capita': 275000, 'Urbanization_Rate': 42.6},
-        {'state': 'TAMIL NADU',     'GSDP_per_capita': 273000, 'Urbanization_Rate': 48.4},
-        {'state': 'TELANGANA',      'GSDP_per_capita': 308000, 'Urbanization_Rate': 38.9},
-        {'state': 'ANDHRA PRADESH', 'GSDP_per_capita': 219000, 'Urbanization_Rate': 29.6},
-        {'state': 'MADHYA PRADESH', 'GSDP_per_capita': 140000, 'Urbanization_Rate': 27.6},
-        {'state': 'RAJASTHAN',      'GSDP_per_capita': 156000, 'Urbanization_Rate': 24.8},
-        {'state': 'UTTAR PRADESH',  'GSDP_per_capita': 83000,  'Urbanization_Rate': 22.3},
-    ])
-    df = pd.merge(df, economic_data, on='state', how='left')
+    # ── Merge Economic Covariates ────────────────────────────────────────────
+    df = pd.merge(df, ECONOMIC_DATA, on='state', how='left')
 
-    # ── 4. Define Treatment Indicator ─────────────────────────────────────────
-    treatment_date = pd.to_datetime(settings.TREATMENT_DATE)
-
-    # Find the consecutive integer index corresponding to the treatment date
-    treatment_time_idx = None
-    for m in sorted_months:
-        if pd.Timestamp(m) >= treatment_date:
-            treatment_time_idx = time_map[m]
-            actual_treatment_month = pd.Timestamp(m)
-            break
-
+    # ── Treatment Indicator ──────────────────────────────────────────────────
+    treatment_date     = pd.to_datetime(settings.TREATMENT_DATE)
+    treatment_time_idx = next(
+        (time_map[m] for m in sorted_months if pd.Timestamp(m) >= treatment_date),
+        None
+    )
     if treatment_time_idx is None:
-        raise ValueError(f"Treatment date {settings.TREATMENT_DATE} is beyond "
-                         f"the panel's end date {df['month'].max().date()}.")
+        raise ValueError(
+            f"Treatment date {settings.TREATMENT_DATE} is beyond panel end "
+            f"({df['month'].max().date()})."
+        )
 
     df['treatment'] = (
-        (df['state'] == 'MAHARASHTRA') &
-        (df['time'] >= treatment_time_idx)
+        (df['state'] == 'MAHARASHTRA') & (df['time'] >= treatment_time_idx)
     ).astype(int)
 
     n_pre  = int(treatment_time_idx)
     n_post = int(df['time'].max() - treatment_time_idx + 1)
-    print(f"\n[TREATMENT] Policy date   : {actual_treatment_month.date()} "
-          f"(time_idx={treatment_time_idx})")
-    print(f"[TREATMENT] Pre-periods   : {n_pre}")
-    print(f"[TREATMENT] Post-periods  : {n_post}")
-    print(f"[TREATMENT] Treated obs   : {df['treatment'].sum()}")
+    print(f"  Pre-periods  : {n_pre}")
+    print(f"  Post-periods : {n_post}")
+    print(f"  Treated obs  : {df['treatment'].sum()}")
 
-    # ── 5. Rename Columns to Library Defaults ─────────────────────────────────
-    # Synthdid.panel_matrices() expects column names matching the unit/time/etc args.
-    # Using library defaults avoids any internal query variable collision.
-    df = df.rename(columns={
-        'state': 'unit',
-        'ev_penetration_rate': 'outcome'
-    })
+    # ── Rename to library defaults ───────────────────────────────────────────
+    df = df.rename(columns={'state': 'unit'})
 
-    # ── 6. Initialise SDiD Model ───────────────────────────────────────────────
-    print("\n[MODEL] Initialising Synthdid estimator...")
-    sdid_model = Synthdid(
+    # ── Initialise & Fit SDiD ────────────────────────────────────────────────
+    sdid = Synthdid(
         data=df,
         unit='unit',
         time='time',
@@ -141,114 +140,164 @@ def execute_sdid_pipeline():
         outcome='outcome',
         covariates=['GSDP_per_capita', 'Urbanization_Rate']
     )
+    sdid.fit(cov_method='optimized')
+    tau_hat = float(sdid.att)
+    print(f"  ATT (τ̂)      : {tau_hat:+.4f} pp")
 
-    # ── 7. Fit (cov_method='optimized' → Eq 4.1 covariate-augmented weights) ──
-    print("[MODEL] Fitting SDiD with covariate-augmented weights (cov_method='optimized')...")
-    sdid_model.fit(cov_method='optimized')
+    # ── Placebo Standard Errors ───────────────────────────────────────────────
+    print(f"  Computing placebo SE (n_reps=200)...")
+    sdid.vcov(method="placebo", n_reps=200)
+    se = float(sdid.se)
 
-    tau_hat = float(sdid_model.att)
-    print(f"[MODEL] ATT (tau_hat): {tau_hat:+.4f} percentage points")
-
-    # ── 8. Placebo Standard Errors ────────────────────────────────────────────
-    # vcov() computes SE via donor-placebo resampling (NOT permutation tests).
-    # This avoids the N=9 p-value floor problem (minimum permutation p = 1/9 ≈ 0.111).
-    # After vcov(), the SE is stored as a float in sdid_model.se.
-    print("[INFERENCE] Computing placebo SE (n_reps=200, ~60s)...")
-    sdid_model.vcov(method="placebo", n_reps=200)
-    se = float(sdid_model.se)
-
-    t_stat   = tau_hat / se
+    t_stat   = tau_hat / se if se > 0 else 0.0
     ci_lower = tau_hat - 1.96 * se
     ci_upper = tau_hat + 1.96 * se
 
-    print("\n" + "-" * 60)
-    print("  SDiD Results — Maharashtra EV Policy 2025")
-    print("-" * 60)
-    print(f"  Estimator        : SDiD (Arkhangelsky et al., 2021)")
-    print(f"  ATT (tau_hat)    : {tau_hat:+.4f} percentage points")
-    print(f"  Placebo SE       : {se:.4f}")
-    print(f"  t-statistic      : {t_stat:.4f}")
-    print(f"  95% CI           : [{ci_lower:.4f}, {ci_upper:.4f}]")
-    print(f"  Significant @5%  : {abs(t_stat) > 1.96}")
-    print("-" * 60)
+    print(f"  Placebo SE   : {se:.4f}")
+    print(f"  t-statistic  : {t_stat:.4f}")
+    print(f"  95% CI       : [{ci_lower:.4f}, {ci_upper:.4f}]")
+    print(f"  Significant  : {'YES ★' if abs(t_stat) > 1.96 else 'No'}")
 
-    # ── 9. Weight Dispersion Audit (Reviewer 2 Flaw 3 validation) ─────────────
-    # weights["omega"] is a list (one array per treatment time-point).
-    # For a single treatment date, take index [0].
-    omega_vec = sdid_model.weights["omega"][0]
-
-    # panel_matrices sorts units alphabetically; reconstruct donor list accordingly
-    all_units = sorted(df['unit'].unique().tolist())
+    # ── Donor Weight Audit ───────────────────────────────────────────────────
+    all_units   = sorted(df['unit'].unique().tolist())
     donor_units = [u for u in all_units if u != 'MAHARASHTRA']
+    omega_vec   = sdid.weights["omega"][0]
 
-    print("\n[AUDIT] Donor unit weight distribution (L2 ridge regularised):")
-    weight_rows = []
-    for state, w in zip(donor_units, omega_vec):
-        print(f"  {state:<25}: {w:.4f}")
-        weight_rows.append({'State': state, 'Omega_Weight': float(w)})
+    print(f"\n  Donor weight distribution (L2-regularised):")
+    for unit, w in sorted(zip(donor_units, omega_vec), key=lambda x: -x[1]):
+        bar = "█" * int(w * 30)
+        print(f"    {unit:<25}  {w:.4f}  {bar}")
 
-    weights_df = pd.DataFrame(weight_rows).sort_values('Omega_Weight', ascending=False)
+    # ── Save Plots ─────────────────────────────────────────────────────────
+    label = model_name.replace(" ", "_").lower()
+    try:
+        sdid.plot_outcomes()
+        for i, fig in enumerate(sdid.plot_outcomes):
+            p = os.path.join(fig_dir, f"sdid_{label}_outcomes_{i}.png")
+            fig.savefig(p, dpi=300, bbox_inches='tight')
+            plt.close(fig)
+            print(f"  [PLOT] Saved: {os.path.basename(p)}")
+    except Exception as e:
+        print(f"  [WARNING] Outcome plot failed: {e}")
 
-    ka_row = weights_df[weights_df['State'] == 'KARNATAKA']
-    if not ka_row.empty:
-        ka_w = float(ka_row['Omega_Weight'].values[0])
-        print(f"\n[AUDIT] Karnataka weight = {ka_w:.4f}  |  threshold = 0.50")
-        if ka_w >= 0.50:
-            print("[AUDIT] WARNING: Karnataka > 0.50. Donor pool may still be fragile.")
-        else:
-            print("[AUDIT] PASS: L2 regularisation dispersed weights away from Karnataka.")
+    try:
+        sdid.plot_weights()
+        for i, fig in enumerate(sdid.plot_weights):
+            p = os.path.join(fig_dir, f"sdid_{label}_weights_{i}.png")
+            fig.savefig(p, dpi=300, bbox_inches='tight')
+            plt.close(fig)
+            print(f"  [PLOT] Saved: {os.path.basename(p)}")
+    except Exception as e:
+        print(f"  [WARNING] Weight plot failed: {e}")
 
-    # ── 10. Persist Results ───────────────────────────────────────────────────
-    results_df = pd.DataFrame({
-        'Estimator':         ['SDiD (Arkhangelsky et al., 2021)'],
-        'Treated_Unit':      ['MAHARASHTRA'],
-        'Treatment_Date':    [str(treatment_date.date())],
-        'Donor_Pool_Size':   [len(donor_units)],
-        'Pre_Periods':       [n_pre],
-        'Post_Periods':      [n_post],
-        'ATT':               [tau_hat],
-        'Placebo_SE':        [se],
-        'CI_Lower_95':       [ci_lower],
-        'CI_Upper_95':       [ci_upper],
-        't_statistic':       [t_stat],
-        'Significant_5pct':  [abs(t_stat) > 1.96],
-    })
-    results_csv = os.path.join(output_dir, "sdid_results_official.csv")
-    results_df.to_csv(results_csv, index=False)
-    print(f"\n[OUTPUT] ATT results → {results_csv}")
+    return {
+        'Model':       model_name,
+        'Donors (N₀)': len(donor_units),
+        'Pre-periods': n_pre,
+        'Post-periods': n_post,
+        'ATT (pp)':    round(tau_hat, 4),
+        'Placebo SE':  round(se, 4),
+        't-stat':      round(t_stat, 4),
+        'CI Lower':    round(ci_lower, 4),
+        'CI Upper':    round(ci_upper, 4),
+        'Sig. @5%':    abs(t_stat) > 1.96,
+    }
 
-    weights_csv = os.path.join(output_dir, "sdid_unit_weights.csv")
-    weights_df.to_csv(weights_csv, index=False)
-    print(f"[OUTPUT] Weights    → {weights_csv}")
 
-    # ── 11. Publication Plots ─────────────────────────────────────────────────
-    fig_dir = os.path.join(settings.REPORTS_DIR, "figures")
+def generate_latex_table(results: list[dict], output_path: str):
+    """Write the dual-specification empirical results table in LaTeX."""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    lines = [
+        r"\begin{table}[htbp]",
+        r"\centering",
+        r"\caption{SDiD Estimates of the Maharashtra EV Subsidy Policy (2025)}",
+        r"\label{tab:main_results}",
+        r"\begin{tabular}{l c c c c c}",
+        r"\hline\hline",
+        r"\textbf{Specification} & \textbf{Donors} & \textbf{ATT (pp)} "
+        r"& \textbf{Placebo SE} & \textbf{95\% CI} & \textbf{Sig.} \\",
+        r"\hline",
+    ]
+
+    for r in results:
+        ci_str  = f"[{r['CI Lower']:.2f}, {r['CI Upper']:.2f}]"
+        sig_str = r"Yes$^{*}$" if r['Sig. @5%'] else "No"
+        lines.append(
+            f"{r['Model']} & {r['Donors (N₀)']} & {r['ATT (pp)']:.2f} "
+            f"& ({r['Placebo SE']:.2f}) & {ci_str} & {sig_str} \\\\"
+        )
+
+    lines += [
+        r"\hline\hline",
+        r"\multicolumn{6}{l}{\footnotesize \textit{Notes:} Standard errors from"
+        r" 200 placebo replications. Outcome: EV penetration rate (\%).} \\",
+        r"\multicolumn{6}{l}{\footnotesize $^{*}$ Significant at the 5\% level."
+        r" ATT = Average Treatment Effect on the Treated.} \\",
+        r"\end{tabular}",
+        r"\end{table}",
+    ]
+
+    with open(output_path, 'w') as f:
+        f.write("\n".join(lines))
+    print(f"\n[LATEX] Table written → {output_path}")
+
+
+def execute_pipeline():
+    print("\n" + "=" * 60)
+    print("  SYNTHETIC DiD — Maharashtra EV Policy 2025")
+    print("  Dual-Specification: Main Model + Spatial Donut Hole")
+    print("=" * 60)
+
+    # ── Load panel ───────────────────────────────────────────────────────────
+    panel_path = os.path.join(
+        settings.PROCESSED_DATA_DIR, "final_state_feature_matrix_main.parquet"
+    )
+    if not os.path.exists(panel_path):
+        print(f"[ERROR] Panel not found: {panel_path}")
+        print("Run: python src/features/polars_transform.py")
+        return
+
+    df_full = pd.read_parquet(panel_path)[["state", "year_month", "outcome"]]
+    print(f"[DATA] Loaded: {len(df_full)} obs, {df_full['state'].nunique()} states")
+    print(f"[DATA] States: {sorted(df_full['state'].unique())}")
+
+    # ── Output directories ────────────────────────────────────────────────────
+    fig_dir     = os.path.join(settings.REPORTS_DIR, "figures")
+    results_dir = os.path.join(settings.MODELS_DIR, "scm_results")
     os.makedirs(fig_dir, exist_ok=True)
-    print("\n[PLOTS] Generating SDiD trajectory and weight plots...")
+    os.makedirs(results_dir, exist_ok=True)
 
-    try:
-        # plot_outcomes() returns self; figures stored in self.plot_outcomes (list)
-        sdid_model.plot_outcomes()
-        for i, fig in enumerate(sdid_model.plot_outcomes):
-            path = os.path.join(fig_dir, f"sdid_outcomes_{i}.png")
-            fig.savefig(path, dpi=300, bbox_inches='tight')
-            print(f"  Saved: sdid_outcomes_{i}.png")
-    except Exception as e:
-        print(f"  [WARNING] Outcome plot failed (non-fatal): {e}")
+    results = []
 
-    try:
-        # plot_weights() returns self; figures stored in self.plot_weights (list)
-        sdid_model.plot_weights()
-        for i, fig in enumerate(sdid_model.plot_weights):
-            path = os.path.join(fig_dir, f"sdid_weights_{i}.png")
-            fig.savefig(path, dpi=300, bbox_inches='tight')
-            print(f"  Saved: sdid_weights_{i}.png")
-    except Exception as e:
-        print(f"  [WARNING] Weight plot failed (non-fatal): {e}")
+    # ── 1. Main Model (N=16) ─────────────────────────────────────────────────
+    res = run_sdid(df_full, "Main Model (N=16)", fig_dir)
+    results.append(res)
 
-    print("\n[SUCCESS] SDiD pipeline complete.\n")
-    return results_df, weights_df
+    # ── 2. Spatial Donut Hole (N=11) ─────────────────────────────────────────
+    df_donut = df_full[~df_full['state'].isin(BORDER_STATES)].copy()
+    print(f"\n[DONUT] Excluded borders: {BORDER_STATES}")
+    print(f"[DONUT] Remaining states: {sorted(df_donut['state'].unique())}")
+    res = run_sdid(df_donut, "Donut Hole (N=11)", fig_dir)
+    results.append(res)
+
+    # ── Save CSV ──────────────────────────────────────────────────────────────
+    results_df  = pd.DataFrame(results)
+    csv_path    = os.path.join(results_dir, "sdid_dual_spec_results.csv")
+    results_df.to_csv(csv_path, index=False)
+    print(f"\n[OUTPUT] Results CSV → {csv_path}")
+
+    # ── Save LaTeX Table ──────────────────────────────────────────────────────
+    tex_path = os.path.join(settings.PROJECT_ROOT, "paper", "tables", "main_empirical_results.tex")
+    generate_latex_table(results, tex_path)
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    print("\n" + "=" * 60)
+    print("  RESULTS SUMMARY")
+    print("=" * 60)
+    print(results_df.to_string(index=False))
+    print("\n[SUCCESS] SDiD dual-specification pipeline complete.")
 
 
 if __name__ == "__main__":
-    execute_sdid_pipeline()
+    execute_pipeline()
