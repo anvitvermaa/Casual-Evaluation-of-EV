@@ -29,7 +29,7 @@ The SCM constructs a data-driven estimate of the unobserved counterfactual `Y_1t
 ### 2.1 Notation
 
 - `J + 1` districts: district `1` = treated; districts `2..J+1` = donor pool
-- `t = 1..T₀` pre-treatment (Jan 2019 – May 2025); `t = T₀+1..T` post-treatment (Jun 2025 – May 2026)
+- `t = 1..T₀` pre-treatment (Jan 2022 – Apr 2025); `t = T₀+1..T` post-treatment (May 2025 – Jun 2026)
 - `Y_it` = outcome (EV penetration rate or PM2.5 monthly mean)
 - `X_i` = pre-treatment predictor vector for district `i`
 

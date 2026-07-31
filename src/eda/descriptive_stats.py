@@ -74,7 +74,7 @@ def generate_descriptive_stats():
             c_str = f"{control[mean_idx]} ({control[std_idx]})"
             f.write(f"| {name} | {t_str} | {c_str} |\n")
             
-        f.write("\n*Note: Standard deviations in parentheses. Pre-treatment window spans Jan 2019 to May 2025.*\n")
+        f.write("\n*Note: Standard deviations in parentheses. Pre-treatment window spans Jan 2022 to Apr 2025.*\n")
         
     print(f"Table 1 generated successfully at {output_path}")
 
