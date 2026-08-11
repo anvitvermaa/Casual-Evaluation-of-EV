@@ -4,7 +4,12 @@ This repository contains the data engineering and causal modeling pipeline for e
 
 ## Overview
 
-The repository hosts the automated data ingestion, DuckDB-powered data processing, and causal inference modeling scripts used to construct a macro-state panel and estimate causal effects of policy interventions.
+**Project Context:** A rigorous quasi-experimental causal evaluation of the Maharashtra EV Subsidy Policy 2025 across a balanced macro-state panel of top vehicle-registering Indian states ($N=16$, $T=54$ months).
+
+* **Uncovered the "Demand Displacement Paradox":** Mathematically isolated a null short-run demand signal using quasi-experimental causal analysis, driven by volatile national FAME-II subsidy expirations.
+* **High-Performance Data Engineering:** Engineered an out-of-core ETL pipeline utilizing a Python AJAX scraper and Polars to lazily ingest, transform, and evaluate 54 months of macroscopic Vahan vehicle registration data.
+* **Advanced Causal Architecture:** Pioneered a rigorous dual-specification causal architecture utilizing the Synthetic Difference-in-Differences (SDiD) estimator with L2 Ridge Regularization to construct unconfounded baseline counterfactuals.
+* **Mathematical Robustness:** Designed advanced spatial robustness checks ("Donut Hole" specifications) and placebo bootstrap permutation tests to mathematically validate SUTVA compliance against cross-border arbitrage spillovers.
 
 ## Setup
 
