@@ -11,18 +11,26 @@ Dual-Specification Architecture:
      Bordering states dropped: Gujarat, Madhya Pradesh, Chhattisgarh,
      Telangana, Karnataka (SUTVA cross-border spillover check).
 
-Methodological Defences:
-  - Placebo SE via .vcov(method='placebo', n_reps=200): bypasses the
-    1/N p-value floor issue for small macro-panels.
+Methodological Notes:
+  - Placebo SE via .vcov(method='placebo', n_reps=200): estimates the
+    standard error from the dispersion of placebo effects across donor units.
+    NOTE: with 1 treated unit and ~15 donors, a rank-based permutation test
+    floors at ~1/16 = 0.0625 and cannot reject at 5%. That floor is a
+    property of the RANK TEST, not of this placebo variance estimator, which
+    yields a Gaussian CI. Inference here rests on the confidence interval,
+    not a permutation p-value.
   - cov_method='optimized': projects out GSDP and Urbanisation OVB
     (Arkhangelsky et al., Eq 4.1).
   - L2 ridge regularisation (default zeta_omega from synthdid): disperses
     donor weights away from single-state anchor fragility.
   - Consecutive 0-based integer time index: required by synthdid internals
     (CRITICAL — do NOT use YYYYMM strings).
+  - Treatment index is floored to month-start before comparison, so the
+    gazette month (2025-05) is correctly the first post-treatment period
+    regardless of the exact notification day (2025-05-23).
 
 Outputs:
-  - models/scm_results/sdid_unified_results.csv
+  - models/scm_results/sdid_dual_spec_results.csv
   - paper/tables/main_empirical_results.tex
   - reports/figures/sdid_{model}_outcomes_{i}.png
   - reports/figures/sdid_{model}_weights_{i}.png
@@ -106,16 +114,40 @@ def run_sdid(df_input: pd.DataFrame, model_name: str, fig_dir: str) -> dict:
     # ── Merge Economic Covariates ────────────────────────────────────────────
     df = pd.merge(df, ECONOMIC_DATA, on='state', how='left')
 
+    # NaN safety: after a left-join, any state missing from ECONOMIC_DATA
+    # would silently produce NaN covariates and corrupt the SDiD fit.
+    missing_cov = df[['GSDP_per_capita', 'Urbanization_Rate']].isna().any(axis=1)
+    if missing_cov.any():
+        bad_states = df.loc[missing_cov, 'state'].unique().tolist()
+        raise AssertionError(
+            f"[FATAL] NaN covariates after merge for states: {bad_states}. "
+            f"Add them to ECONOMIC_DATA before fitting."
+        )
+
+    # NaN/inf safety: zero total_registrations in raw data would produce
+    # NaN or inf in outcome = ev/total*100. Catch before the estimator runs.
+    bad_outcome = ~df['outcome'].apply(lambda x: pd.api.types.is_float(x) and x == x and x != float('inf'))
+    if bad_outcome.any():
+        raise AssertionError(
+            f"[FATAL] {bad_outcome.sum()} rows have NaN/inf outcome values. "
+            f"Check for zero total_registrations in raw CSV files."
+        )
+
     # ── Treatment Indicator ──────────────────────────────────────────────────
-    treatment_date     = pd.to_datetime(settings.TREATMENT_DATE)
+    # Floor to month-start before comparing against month timestamps.
+    # treatment_date = 2025-05-23 as a day-exact timestamp compares False
+    # against 2025-05-01 (the stored month timestamp), pushing treatment
+    # to June and producing the wrong 41/13 split instead of 40/14.
+    # Flooring to the period month-start fixes this.
+    treatment_month    = pd.to_datetime(settings.TREATMENT_DATE).to_period('M').to_timestamp()
     treatment_time_idx = next(
-        (time_map[m] for m in sorted_months if pd.Timestamp(m) >= treatment_date),
+        (time_map[m] for m in sorted_months if pd.Timestamp(m) >= treatment_month),
         None
     )
     if treatment_time_idx is None:
         raise ValueError(
-            f"Treatment date {settings.TREATMENT_DATE} is beyond panel end "
-            f"({df['month'].max().date()})."
+            f"Treatment month {treatment_month.strftime('%Y-%m')} is beyond panel end "
+            f"({max(sorted_months).strftime('%Y-%m')})."
         )
 
     df['treatment'] = (
@@ -124,8 +156,8 @@ def run_sdid(df_input: pd.DataFrame, model_name: str, fig_dir: str) -> dict:
 
     n_pre  = int(treatment_time_idx)
     n_post = int(df['time'].max() - treatment_time_idx + 1)
-    print(f"  Pre-periods  : {n_pre}")
-    print(f"  Post-periods : {n_post}")
+    print(f"  Pre-periods  : {n_pre}   (Jan 2022 – Apr 2025)")
+    print(f"  Post-periods : {n_post}  (May 2025 – Jun 2026)")
     print(f"  Treated obs  : {df['treatment'].sum()}")
 
     # ── Rename to library defaults ───────────────────────────────────────────

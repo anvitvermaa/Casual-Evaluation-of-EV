@@ -16,7 +16,7 @@ def run_did_model():
     """Runs a TWFE DiD model on the macro-state feature matrix."""
     print("Running Macro-State Difference-in-Differences Baseline Model...")
 
-    input_path = os.path.join(settings.PROCESSED_DATA_DIR, "final_state_feature_matrix.parquet")
+    input_path = os.path.join(settings.PROCESSED_DATA_DIR, "final_state_feature_matrix_main.parquet")
     output_dir = os.path.join(settings.MODELS_DIR, "scm_results")
     os.makedirs(output_dir, exist_ok=True)
 

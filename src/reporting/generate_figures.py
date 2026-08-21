@@ -74,7 +74,7 @@ def optimize_weights(X_treated, X_donor):
     return res.x
 
 def load_panel():
-    path = os.path.join(settings.PROCESSED_DATA_DIR, "final_state_feature_matrix.parquet")
+    path = os.path.join(settings.PROCESSED_DATA_DIR, "final_state_feature_matrix_main.parquet")
     df   = pd.read_parquet(path)
     df['date'] = pd.to_datetime(df['month'])
     return df
