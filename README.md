@@ -1,6 +1,6 @@
 <div align="center">
   <h1>Maharashtra EV Policy 2025: A Causal Evaluation</h1>
-  <p><strong>Proving the "Demand Displacement Paradox" using Synthetic Difference-in-Differences</strong></p>
+  <p><strong>Estimating the Short-Run Effect of the Maharashtra EV Subsidy using Synthetic Difference-in-Differences</strong></p>
 
   [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
   [![Polars](https://img.shields.io/badge/Data_Engine-Polars-orange.svg)](https://pola.rs/)
@@ -10,86 +10,81 @@
 
 ---
 
-## Executive Summary
+## Results (Clean Run — Battery-EV Only Outcome)
 
-| Metric | Value |
-|--------|-------|
-| **Causal Finding (ATT)** | −0.943 pp (EV penetration rate) |
-| **Statistical Validation** | Placebo SE, 200 replications |
-| **Panel Dimensions** | N = 16 states, T = 54 months (Jan 2022 – Jun 2026) |
-| **Treatment Date** | May 2025 (Maharashtra EV Subsidy Policy gazette notification) |
-| **Raw CSV files ingested** | 80 fuel-type cross-tabulation files (one per state × year) |
-| **Total registered vehicles represented** | ~34 million vehicles across all 80 files |
-| **Final modeling matrix** | 864 rows (16 × 54 perfectly balanced panel) |
-| **Estimator** | Synthdid (Arkhangelsky et al., AER 2021) with L2 Ridge Regularization |
+| Specification | Donors | Pre-periods | Post-periods | ATT (pp) | Placebo SE | t-stat | 95% CI | Significant |
+|--------------|--------|-------------|--------------|----------|-----------|--------|--------|-------------|
+| Main Model (N=16) | 15 | 41 | 13 | +0.0373 | 0.9795 | 0.038 | [−1.88, +1.96] | No |
+| Donut Hole (N=11) | 10 | 41 | 13 | +0.1432 | 1.6555 | 0.087 | [−3.10, +3.39] | No |
+
+**Finding:** After correcting the outcome variable to include only battery-electric vehicles (ELECTRIC(BOV), ELECTRIC), the policy shows **no statistically detectable short-run effect** on EV adoption in either specification. The ATT is positive but economically negligible and statistically indistinguishable from zero.
+
+> **Important note on a previous claim:** An earlier version of this project reported a statistically significant −0.943 pp decline. That result was produced with `STRONG HYBRID EV` included in the EV outcome. Strong hybrids surged nationally in 2024-25 due to new model launches entirely unrelated to the Maharashtra subsidy — contaminating the outcome variable right at the treatment window. Removing them corrects the measurement. The null result above is the accurate finding.
 
 ---
 
 ## What This Is
 
-Governments frequently announce subsidies and claim success when sales rise, conflating correlation with causation. This project is a rigorous, end-to-end data engineering and econometric pipeline that evaluates whether the **Maharashtra EV Subsidy Policy (2025)** produced a genuine causal increase in battery-electric vehicle adoption.
+This project is a rigorous, end-to-end data engineering and econometric pipeline that evaluates whether the **Maharashtra EV Subsidy Policy (2025)** produced a genuine causal increase in battery-electric vehicle adoption across a balanced macro-state panel.
 
-Instead of a naive before/after comparison, the project uses **Synthetic Difference-in-Differences (SDiD)**. L2 Ridge Regularization is applied to 15 donor states to construct a "Synthetic Maharashtra"—a weighted counterfactual trajectory calibrated to match Maharashtra's pre-treatment trend. The ATT isolates the true policy effect by comparing the observed trajectory against this counterfactual in the post-treatment window.
+Instead of a naive before/after comparison, the project uses **Synthetic Difference-in-Differences (SDiD)**. L2 Ridge Regularization is applied to 15 donor states to construct a "Synthetic Maharashtra"—a weighted counterfactual trajectory calibrated to match Maharashtra's pre-treatment trend. The ATT isolates the true policy effect by comparing the observed post-treatment trajectory against this counterfactual.
 
 ---
 
-## Empirical Finding: The "Demand Displacement Paradox"
+## What the Null Result Actually Means
 
-The model produces a statistically validated **Average Treatment Effect (ATT) of −0.943 percentage points** in EV penetration rate.
+A null result is **not a failure** — it is a scientifically valid finding. The policy shows no detectable effect in the short-run (13 months post-treatment). There are several credible economic explanations:
 
-This is a counter-intuitive but economically coherent result. When the gazette notification was published on May 23, 2025, the market had already been anticipating a state-level subsidy for months — during which time the most price-sensitive buyers had already entered the market to capture the expiring national FAME-II subsidies. The post-announcement window was then simultaneously characterised by:
+1. **Supply-side constraints:** Subsidy demand may be limited by charging infrastructure rather than purchase price. If there are not enough public chargers, the subsidy alone will not drive additional purchases.
+2. **Policy awareness lag:** Many consumers may not yet be aware of the state-level subsidy, especially with the national FAME-II expiration creating market uncertainty around the same time.
+3. **Short post-window:** 13 months of post-treatment data may be insufficient for a durable behavioural response to become visible in aggregate state-level penetration rates.
 
-1. **Demand exhaustion** — the pre-announcement surge had pulled forward the existing eager buyer pool.
-2. **Infrastructure wait-and-see** — buyers waiting for the promised public fast-charging rollout before committing.
+The null result is honest and defensible — it is meaningfully different from "the policy failed."
 
-The combined effect is a measurable short-run demand contraction at the exact moment of policy activation.
+---
 
-**Note on inference:** With N₀ = 15 donors and a rank-based placebo test, the minimum achievable p-value is approximately 1/16 ≈ 0.063. Statistical significance here is reported as a t-statistic derived from placebo-bootstrapped standard errors (200 replications), not a permutation p-value.
+## Panel Summary
+
+| Metric | Value |
+|--------|-------|
+| Panel dimensions | N = 16 states, T = 54 months (Jan 2022 – Jun 2026) |
+| Total observations | 864 (perfectly balanced — verified by hard assertion) |
+| Treatment date | May 2025 (Maharashtra EV Subsidy Policy gazette notification: May 23, 2025) |
+| Outcome variable | EV penetration rate (%) — battery-EVs only, strong hybrids excluded |
+| Raw CSV files ingested | 80 (one per state × year, from MoRTH VAHAN dashboard) |
+| Estimator | Synthdid (Arkhangelsky et al., AER 2021) with L2 Ridge Regularization |
 
 ---
 
 ## Architecture
 
-This is a multi-stage, out-of-core data engineering pipeline. Each stage is a separate process connected via the `Makefile` DAG.
-
 ```
-data/raw/*.csv
+data/raw/states/*.csv  (80 files)
       │
-      ▼  [Stage 1 — Pandas]
-parse_vahan_data.py        →   vahan_fuel_panel.parquet
+      ▼  [Stage 1 — Pandas]   src/data_ingestion/parse_vahan_data.py
+      │   Unpivots cross-tabulated fuel grids. Battery-EV outcome only.
+      │   Strong hybrids tracked separately as diagnostic column.
       │
-      ▼  [Stage 2 — DuckDB]
-duckdb_joins.py            →   unified_state_dataset.parquet
+vahan_fuel_panel.parquet
       │
-      ▼  [Stage 3 — Polars lazy eval]
-polars_transform.py        →   final_state_feature_matrix_main.parquet
+      ▼  [Stage 2 — DuckDB]   src/data_engineering/duckdb_joins.py
+      │   In-memory SQL normalization and schema enforcement.
       │
-      ▼  [Stage 4 — SynthDiD]
-synthetic_control.py       →   ATT, SE, 95% CI, weight plots, LaTeX table
+      ▼  [Stage 3 — Polars]   src/features/polars_transform.py
+      │   Lazy evaluation, treatment indicators, hard balance assertion.
+      │
+final_state_feature_matrix_main.parquet  (864 rows, 16 × 54)
+      │
+      ▼  [Stage 4 — SynthDiD]  src/models/synthetic_control.py
+          Dual specification: Main (N=16) + Spatial Donut Hole (N=11).
+          Placebo-bootstrapped SE (200 replications). LaTeX table output.
 ```
 
-**Stage 1 (Pandas):** Parses 80 messy, cross-tabulated CSVs from the MoRTH VAHAN dashboard. Handles encoding fallbacks (UTF-8 → latin-1), strips Indian-format number commas (`1,23,456` → `123456`), and separates battery-EV registrations from Strong Hybrid registrations (the latter are tracked diagnostically but **excluded from the outcome**, as they are not policy-eligible and surged independently in 2024-25).
-
-**Stage 2 (DuckDB):** Runs in-memory SQL joins to produce a unified state-level panel view, applying schema normalization.
-
-**Stage 3 (Polars):** Lazy evaluation filters the panel to the 16 macro-states, computes the EV penetration rate (outcome variable), assigns treatment indicators, and runs a **hard-failing balance assertion** to guarantee the panel is exactly N × T before writing the modeling matrix.
-
-**Stage 4 (SynthDiD):** Fits the `synthdid` estimator (Arkhangelsky et al., AER 2021) using optimized covariate projection (GSDP per capita, urbanization rate) and computes placebo-bootstrapped standard errors.
+**Robustness:** Two specifications run automatically. The Spatial Donut Hole drops Maharashtra's 5 bordering states (Gujarat, MP, Chhattisgarh, Telangana, Karnataka) to test for cross-border SUTVA spillovers. Both return null results with overlapping confidence intervals.
 
 ---
 
-## Robustness Specifications
-
-Two specifications are run in every pipeline execution:
-
-| Specification | N (Donors) | Purpose |
-|---------------|-----------|---------|
-| Main Model | 15 | Full donor pool |
-| Spatial Donut Hole | 10 | Bordering states (Gujarat, MP, Chhattisgarh, Telangana, Karnataka) excluded — tests for cross-border SUTVA spillovers |
-
----
-
-## Execution & Replication
+## Execution
 
 ### Setup
 ```bash
@@ -102,15 +97,14 @@ conda activate ev-policy-sdid
 make run-sdid
 ```
 
-This sequentially executes all stages: ingestion → DuckDB joins → Polars transformation → SDiD estimation → figure generation.
+### Key Source Files
 
-### Explore the Source
 | File | What it does |
 |------|-------------|
-| `config/settings.py` | Single source of truth: treatment date, state list, paths |
-| `src/data_ingestion/parse_vahan_data.py` | Fuel CSV parser — the most brittle part of the pipeline |
+| `config/settings.py` | Treatment date, state list, all paths |
+| `src/data_ingestion/parse_vahan_data.py` | CSV parser — battery-EV extraction |
 | `src/features/polars_transform.py` | Lazy Polars pipeline + balance assertion |
-| `src/models/synthetic_control.py` | SDiD estimator, dual-spec execution, LaTeX table generation |
+| `src/models/synthetic_control.py` | SDiD estimator, dual-spec, LaTeX output |
 | `src/data_engineering/duckdb_joins.py` | DuckDB in-memory SQL normalization |
 
 ---
