@@ -25,8 +25,16 @@ from config import settings
 MONTH_COLS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
               "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 
-# All Vahan electric fuel row labels to capture EV registrations
-EV_FUEL_LABELS = {"ELECTRIC(BOV)", "ELECTRIC", "STRONG HYBRID EV"}
+# Battery-electric fuel row labels ONLY (policy-eligible vehicles).
+# NOTE: STRONG HYBRID EV has been deliberately excluded.
+# Strong hybrids are NOT battery-electric, are NOT eligible for the
+# Maharashtra EV Subsidy Policy 2025, and their national registrations
+# surged in 2024-25 due to new hybrid model launches — contaminating
+# the outcome variable right at the treatment window if included.
+EV_FUEL_LABELS = {"ELECTRIC(BOV)", "ELECTRIC"}
+
+# Tracked separately for diagnostic auditing (NOT included in outcome)
+STRONG_HYBRID_LABELS = {"STRONG HYBRID EV"}
 
 
 def parse_fuel_csv(filepath: str, state_name: str, year: int) -> list[dict]:
@@ -72,8 +80,9 @@ def parse_fuel_csv(filepath: str, state_name: str, year: int) -> list[dict]:
         df[col] = df[col].astype(str).str.replace(",", "", regex=False)
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
 
-    ev_by_month    = {m: 0 for m in present_month_cols}
-    total_by_month = {m: 0 for m in present_month_cols}
+    ev_by_month            = {m: 0 for m in present_month_cols}
+    total_by_month         = {m: 0 for m in present_month_cols}
+    strong_hybrid_by_month = {m: 0 for m in present_month_cols}
 
     for _, row in df.iterrows():
         fuel_label = str(row[fuel_col]).strip().upper()
@@ -85,19 +94,23 @@ def parse_fuel_csv(filepath: str, state_name: str, year: int) -> list[dict]:
             total_by_month[month] += val
             if fuel_label in EV_FUEL_LABELS:
                 ev_by_month[month] += val
+            if fuel_label in STRONG_HYBRID_LABELS:
+                strong_hybrid_by_month[month] += val
 
-    # Build one record per month
+    # Build one record per month.
+    # IMPORTANT: We now include months with zero total registrations as explicit
+    # zero rows (instead of silently dropping them). This is required so that
+    # the downstream balance assertion in polars_transform.py can detect and
+    # loudly fail if any state-month is missing from the panel.
     records = []
     for month in present_month_cols:
-        if total_by_month[month] == 0:
-            continue  # Skip months with zero data (e.g., future months in 2026)
-
         month_num = MONTH_COLS.index(month) + 1
         records.append({
-            "state":               state_name.upper(),
-            "year_month":          f"{year}-{month_num:02d}",
-            "ev_registrations":    ev_by_month[month],
-            "total_registrations": total_by_month[month],
+            "state":                     state_name.upper(),
+            "year_month":                f"{year}-{month_num:02d}",
+            "ev_registrations":          ev_by_month[month],
+            "strong_hybrid_registrations": strong_hybrid_by_month[month],
+            "total_registrations":       total_by_month[month],
         })
 
     return records

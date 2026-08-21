@@ -27,8 +27,8 @@ TREATMENT_DATE = "2025-05-23" # Policy announcement date
 TREATMENT_MONTH = "2025-05" # Policy announcement month
 
 # SCM Configuration — Maharashtra EV Policy 2025
-# Pre-treatment: Jan 2022 – Apr 2025 (38 months of baseline)
-# Post-treatment: May 2025 – present (policy divergence window)
+# Pre-treatment: Jan 2022 – Apr 2025 (40 months of baseline)
+# Post-treatment: May 2025 – Jun 2026 (14 months of policy window)
 PRE_TREATMENT_START = "2022-01"
 PRE_TREATMENT_END = "2025-04"
 POST_TREATMENT_START = "2025-05"

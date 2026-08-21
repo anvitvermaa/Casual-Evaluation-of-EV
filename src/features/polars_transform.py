@@ -91,22 +91,50 @@ def engineer_features():
     df = lf.collect()
     df = df.drop_nulls(subset=["outcome"])
 
-    # ── 6. Validation ─────────────────────────────────────────────────────────
+    # ── 6. Strict Balance Assertion ───────────────────────────────────────────
+    # SDiD requires a PERFECTLY balanced panel. If any state is missing even a
+    # single month, the matrix dimensions will not align and the estimator will
+    # either crash or silently produce garbage results. We check this explicitly
+    # and FAIL LOUDLY rather than allowing a corrupted run to continue.
     n_states   = df["state"].n_unique()
     n_months   = df["year_month"].n_unique()
     n_treated  = df.filter(pl.col("did_treat_post") == 1).height
+    total_rows = df.height
 
-    print(f"\n✅ Feature matrix built:")
-    print(f"   Shape            : {df.shape}")
-    print(f"   States (N)       : {n_states}")
-    print(f"   Months (T)       : {n_months}")
-    print(f"   States present   : {sorted(df['state'].unique().to_list())}")
+    print(f"\n=== BALANCE ASSERTION ===")
+    print(f"   Unique states    : {n_states}")
+    print(f"   Unique months    : {n_months}")
+    print(f"   Total rows       : {total_rows}  (should equal {n_states} × {n_months} = {n_states * n_months})")
+
+    months_per_state = df.group_by("state").len().sort("state")
+    print(f"\n   Months per state (must all match {n_months}):")
+    for row in months_per_state.iter_rows(named=True):
+        flag = "OK" if row["len"] == n_months else "*** UNBALANCED ***"
+        print(f"     {row['state']:<25}  {row['len']:>3}  {flag}")
+
+    unbalanced = months_per_state.filter(pl.col("len") != n_months)
+    if unbalanced.height > 0:
+        raise AssertionError(
+            f"[FATAL] Panel is NOT balanced. "
+            f"{unbalanced.height} state(s) have a different number of months.\n"
+            f"The SDiD matrix would be corrupt. Fix the raw data before proceeding.\n"
+            f"Unbalanced states:\n{unbalanced}"
+        )
+
+    if total_rows != n_states * n_months:
+        raise AssertionError(
+            f"[FATAL] Row count mismatch: got {total_rows}, expected {n_states * n_months}. "
+            f"There are duplicate state-month combinations in the panel."
+        )
+
+    print(f"\n[BALANCE CHECK PASSED] {n_states} states × {n_months} months = {total_rows} rows.")
+    print(f"   States           : {sorted(df['state'].unique().to_list())}")
     print(f"   Treatment obs    : {n_treated}")
     print(f"   Outcome range    : {df['outcome'].min():.4f} – {df['outcome'].max():.4f} %")
 
     missing = df.filter(pl.col("outcome").is_null()).height
     if missing > 0:
-        print(f"   [WARNING] {missing} null outcome rows dropped.")
+        print(f"   [WARNING] {missing} null outcome rows found — check ev/total ratio calculation.")
 
     # ── 7. Write output ───────────────────────────────────────────────────────
     os.makedirs(settings.PROCESSED_DATA_DIR, exist_ok=True)
