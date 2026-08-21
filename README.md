@@ -14,8 +14,8 @@
 
 | Specification | Donors | Pre-periods | Post-periods | ATT (pp) | Placebo SE | t-stat | 95% CI | Significant |
 |--------------|--------|-------------|--------------|----------|-----------|--------|--------|-------------|
-| Main Model (N=16) | 15 | 41 | 13 | +0.0373 | 0.9795 | 0.038 | [−1.88, +1.96] | No |
-| Donut Hole (N=11) | 10 | 41 | 13 | +0.1432 | 1.6555 | 0.087 | [−3.10, +3.39] | No |
+| Main Model (N=16) | 15 | 40 | 14 | +0.0347 | 1.1647 | 0.030 | [−2.25, +2.32] | No |
+| Donut Hole (N=11) | 10 | 40 | 14 | +0.2889 | 1.6546 | 0.175 | [−2.95, +3.53] | No |
 
 **Finding:** After correcting the outcome variable to include only battery-electric vehicles (ELECTRIC(BOV), ELECTRIC), the policy shows **no statistically detectable short-run effect** on EV adoption in either specification. The ATT is positive but economically negligible and statistically indistinguishable from zero.
 
